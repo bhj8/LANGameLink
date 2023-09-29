@@ -48,13 +48,25 @@ class WebSocketBridge:
             game_data = await writer.read(4096)
             await websocket.send(game_data)
 
-    @handle_websocket_errors
+    async def establish_tcp_connection(self):
+        while True:
+            try:
+                reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, self.GAME_TCP_PORT)
+                print("Connected to game client successfully!")
+                return reader, writer
+            except ConnectionRefusedError:
+                print("Failed to connect to game client. Retrying in 5 seconds...")
+                await asyncio.sleep(5)
+                
     async def connect_to_websocket_server(self):
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ssl_context.load_verify_locations('certs/cert.pem')  # This is the server's certificate for verification
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
         while True:
             try:
-                websocket = await websockets.connect(f"wss://[{self.IPV6_ADDRESS}]:{self.IPV6_PORT}", ssl=ssl_context)
+                websocket = await websockets.connect(f"wss://[{self.SERVER_IPV6_ADDRESS}]:{self.SERVER_PORT}", ssl=ssl_context)
                 print("Connected to WebSocket server successfully!")
                 return websocket
             except Exception as e:
@@ -68,7 +80,7 @@ class WebSocketBridge:
             udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             udp_socket.bind((self.GAME_IPV4_ADDRESS, self.GAME_UDP_PORT))
 
-            reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, self.GAME_TCP_PORT)
+            reader, writer = await self.establish_tcp_connection()
 
             tasks = [
                 self.udp_receiver(websocket, udp_socket),
