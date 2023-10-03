@@ -3,31 +3,36 @@ import ssl
 import websockets
 import socket
 
-class WebSocketBridge:
+class LANGameLink_426_client:
 
-    SERVER_IPV6_ADDRESS = "::1"
-    SERVER_PORT = 8765
-    GAME_IPV4_ADDRESS = "127.0.0.1"
-    GAME_TCP_PORT = 12346
-    GAME_UDP_PORT = 12345
+    def __init__(self, message_callback=None):
+        self.message_callback = message_callback
+        self.delay = 0.0  # in milliseconds
+        self.SERVER_IPV6_ADDRESS = "::1"
+        self.SERVER_PORT = 8765
+        self.GAME_IPV4_ADDRESS = "127.0.0.1"
+        self.GAME_TCP_PORTS = [123]
+        self.GAME_UDP_PORTS = [123]
 
-    def __init__(self):
-        pass
+    def send_message(self, msg):
+        if self.message_callback:
+            self.message_callback(msg)
 
-    @staticmethod
-    async def handle_websocket_errors(coro):
-        async def wrapper(*args, **kwargs):
+
+    def handle_websocket_errors(coro):
+        async def wrapper(instance, *args, **kwargs):
             try:
-                return await coro(*args, **kwargs)
+                return await coro(instance, *args, **kwargs)
             except websockets.ConnectionClosedError:
-                print("WebSocket connection lost. Attempting to reconnect...")
+                instance.send_message("WebSocket connection lost. Attempting to reconnect...")
         return wrapper
 
+
     @handle_websocket_errors
-    async def udp_receiver(self, websocket, udp_socket):
+    async def udp_receiver(self, websocket, udp_socket, udp_port):
         while True:
             data = await websocket.recv()
-            udp_socket.sendto(data, (self.GAME_IPV4_ADDRESS, self.GAME_UDP_PORT))
+            udp_socket.sendto(data, (self.GAME_IPV4_ADDRESS, udp_port))
 
     @handle_websocket_errors
     async def udp_sender(self, websocket, udp_socket):
@@ -36,7 +41,7 @@ class WebSocketBridge:
             await websocket.send(game_data)
 
     @handle_websocket_errors
-    async def tcp_receiver(self, websocket, reader):
+    async def tcp_receiver(self, websocket, reader, tcp_port):
         while True:
             data = await websocket.recv()
             reader.write(data)
@@ -48,44 +53,61 @@ class WebSocketBridge:
             game_data = await writer.read(4096)
             await websocket.send(game_data)
 
+    async def measure_delay(self, websocket):
+        while websocket.open:
+            start_time = asyncio.get_event_loop().time()
+            await websocket.ping()
+            end_time = asyncio.get_event_loop().time()
+            self.delay = (end_time - start_time) * 1000  # Convert to milliseconds
+            await asyncio.sleep(1)  # measure delay every 10 seconds, adjust as needed
+
     @handle_websocket_errors
     async def connect_to_websocket_server(self):
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_context.load_verify_locations('certs/cert.pem')  # This is the server's certificate for verification
+        ssl_context.load_verify_locations('certs/cert.pem')
         while True:
             try:
-                websocket = await websockets.connect(f"wss://[{self.IPV6_ADDRESS}]:{self.IPV6_PORT}", ssl=ssl_context)
-                print("Connected to WebSocket server successfully!")
+                websocket = await websockets.connect(f"wss://[{self.SERVER_IPV6_ADDRESS}]:{self.SERVER_PORT}", ssl=ssl_context)
+                self.send_message("Connected to WebSocket server successfully!")
+                asyncio.create_task(self.measure_delay(websocket))  # Start measuring delay
                 return websocket
             except Exception as e:
-                print(f"Error connecting to WebSocket server: {e}. Retrying in 5 seconds...")
-                await asyncio.sleep(5)
+                self.send_message(f"Error connecting to WebSocket server: {e}. Retrying in 5 seconds...")
+                await asyncio.sleep(2)
 
     async def run(self):
         while True:
             websocket = await self.connect_to_websocket_server()
+            tasks = []
 
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            udp_socket.bind((self.GAME_IPV4_ADDRESS, self.GAME_UDP_PORT))
+            for udp_port in self.GAME_UDP_PORTS:
+                udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                udp_socket.bind((self.GAME_IPV4_ADDRESS, udp_port))
 
-            reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, self.GAME_TCP_PORT)
+                tasks.extend([
+                    self.udp_receiver(websocket, udp_socket, udp_port),
+                    self.udp_sender(websocket, udp_socket)
+                ])
 
-            tasks = [
-                self.udp_receiver(websocket, udp_socket),
-                self.udp_sender(websocket, udp_socket),
-                self.tcp_receiver(websocket, reader),
-                self.tcp_sender(websocket, writer)
-            ]
+            for tcp_port in self.GAME_TCP_PORTS:
+                reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, tcp_port)
+
+                tasks.extend([
+                    self.tcp_receiver(websocket, reader, tcp_port),
+                    self.tcp_sender(websocket, writer)
+                ])
 
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
             for task in pending:
                 task.cancel()
 
-            udp_socket.close()
-            writer.close()
-            print("Attempting to reconnect to the WebSocket server...")
+            self.send_message("Attempting to reconnect to the WebSocket server...")
 
 if __name__ == "__main__":
-    bridge = WebSocketBridge()
+    def gui_message_callback(msg):
+        # 您可以在此函数中将消息传递给您的前端应用程序
+        pass
+
+    bridge = LANGameLink_426_client(message_callback=gui_message_callback)
     asyncio.run(bridge.run())
