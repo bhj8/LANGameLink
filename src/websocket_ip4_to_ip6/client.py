@@ -9,10 +9,10 @@ class LANGameLink_426_client:
         self.message_callback = message_callback
         self.delay = 0.0  # in milliseconds
         self.SERVER_IPV6_ADDRESS = "::1"
-        self.SERVER_PORT = 8765
+        self.SERVER_PORT = 20000
         self.GAME_IPV4_ADDRESS = "127.0.0.1"
-        self.GAME_TCP_PORTS = [123]
-        self.GAME_UDP_PORTS = [123]
+        self.GAME_TCP_PORTS = []
+        self.GAME_UDP_PORTS = []
 
     def send_message(self, msg):
         if self.message_callback:
@@ -89,26 +89,22 @@ class LANGameLink_426_client:
     async def run(self):
         while True:
             websocket = await self.connect_to_websocket_server()
-            tasks = []
+            task_list = []  # 用于存放任务
 
             for udp_port in self.GAME_UDP_PORTS:
                 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 udp_socket.bind((self.GAME_IPV4_ADDRESS, udp_port))
 
-                tasks.extend([
-                    self.udp_receiver(websocket, udp_socket, udp_port),
-                    self.udp_sender(websocket, udp_socket)
-                ])
+                task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket, udp_port)))
+                task_list.append(asyncio.create_task(self.udp_sender(websocket, udp_socket)))
 
             for tcp_port in self.GAME_TCP_PORTS:
                 reader, writer = await self.establish_tcp_connection(self.GAME_IPV4_ADDRESS, tcp_port)
 
-                tasks.extend([
-                    self.tcp_receiver(websocket, reader, tcp_port),
-                    self.tcp_sender(websocket, writer)
-                ])
+                task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader, tcp_port)))
+                task_list.append(asyncio.create_task(self.tcp_sender(websocket, writer)))
 
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait(task_list, return_when=asyncio.FIRST_COMPLETED)
 
             for task in pending:
                 task.cancel()

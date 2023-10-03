@@ -19,8 +19,9 @@ class ServerFrame(tk.Frame):
         self.service_running = False
         
         self.server.IPV6_ADDRESS="自动获取中..."
-        # 设置一个2秒后执行的延迟函数来更新IPV6_ADDRESS        
-        self.after(2000, self.update_ipv6_address)        
+        # 设置一个2秒后执行的延迟函数来更新IPV6_ADDRESS
+        for _ in range(10):
+            self.after(_ * 1000, self.update_ipv6_address)
         self.server.IPV6_PORT=network_utils_instance.available_port
         
         
@@ -137,9 +138,9 @@ class ServerFrame(tk.Frame):
         for protocol, inputs in self.dynamic_ports.items():
             for inp in inputs:
                 if protocol == "TCP":
-                    TCP_PORTS.append(inp)
+                    TCP_PORTS.append(int(inp.var.get()))
                 else:
-                    UDP_PORTS.append(inp)
+                    UDP_PORTS.append(int(inp.var.get()))
         self.server.GAME_TCP_PORTS = TCP_PORTS
         self.server.GAME_UDP_PORTS = UDP_PORTS
     def _start_delay_refresh_service(self):

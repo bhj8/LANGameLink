@@ -14,12 +14,17 @@ class NetworkUtils:
         """
         使用外部服务获取公网IPv6地址
         """
-        try:
-            response = requests.get("http://6.ipw.cn", timeout=10)
-            response.raise_for_status()
-            self.ipv6_address = response.text.strip()
-        except requests.RequestException:
-            self.ipv6_address = None
+        count = 0
+        while count <5:
+            try:
+                response = requests.get("http://6.ipw.cn", timeout=3)
+                response.raise_for_status()
+                self.ipv6_address = response.text.strip()
+                return
+            except requests.RequestException:
+                continue
+            finally :
+                count += 1
 
     @staticmethod
     def find_available_port(start=20000, end=60000):
