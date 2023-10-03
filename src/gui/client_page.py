@@ -131,15 +131,15 @@ class ClientFrame(tk.Frame):
         for protocol, inputs in self.dynamic_ports.items():
             for inp in inputs:
                 if protocol == "TCP":
-                    TCP_PORTS.append(inp)
+                    TCP_PORTS.append(int(inp.var.get()))
                 else:
-                    UDP_PORTS.append(inp)
+                    UDP_PORTS.append(int(inp.var.get()))
         self.client.GAME_TCP_PORTS = TCP_PORTS
         self.client.GAME_UDP_PORTS = UDP_PORTS
     def _start_delay_refresh_service(self):
         # 示例逻辑，实际实现可能会有所不同
         def update_delay():
-            self.delay_var.set(f"延迟: {self.client.delay} ms")
+            self.delay_var.set(f"延迟: {self.client.delay*1000:.2f} ms")
 
             # 每秒更新一次延迟，并保持定时器的ID
             self.delay_update_id = self.after(1000, update_delay)

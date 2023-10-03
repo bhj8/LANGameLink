@@ -15,10 +15,6 @@ class LANGameLink_426_client:
         self.GAME_TCP_PORTS = []
         self.GAME_UDP_PORTS = []
         
-        
-        self.udp_queue = asyncio.Queue()
-        self.tcp_queue = asyncio.Queue()
-        self.pong_queue = asyncio.Queue()
 
     def send_message(self, msg):
         if self.message_callback:
@@ -34,38 +30,39 @@ class LANGameLink_426_client:
         return wrapper
 
     @handle_websocket_errors
-    async def central_websocket_receiver(self, websocket):
+    async def central_websocket_receiver(self, websocket,udp_queue,tcp_queue,pong_queue):
         while True:
             message = await websocket.recv()
             prefix = message[:4]
             if prefix == b"UDP:":
-                await self.udp_queue.put(message[4:])
+                await udp_queue.put(message[4:])
             elif prefix == b"TCP:":
-                await self.tcp_queue.put(message[4:])
-            elif prefix == b"PNG:":
-                await self.pong_queue.put(message[4:])
+                await tcp_queue.put(message[4:])
+            elif prefix == b"CNG:":
+                await pong_queue.put(message[4:])
+            elif prefix == b"SNG:":
+                await websocket.send(message)
 
     @handle_websocket_errors
     async def send_ping(self, websocket):
         """不断发送PNG:消息给服务器"""
         while True:
             start_time = time.time()
-            await websocket.send(b"PNG:"+str(start_time).encode())
+            await websocket.send(b"CNG:"+str(start_time).encode())
             await asyncio.sleep(1)
     
     @handle_websocket_errors
-    async def get_ping(self):
+    async def get_ping(self,pong_queue):
         """不断接收服务器发送的PNG:消息并计算延迟"""
         while True:
-            pong = await self.pong_queue.get()
-            remote_time = pong[4:]
-            remote_time = float(remote_time.decode())
+            pong = await pong_queue.get()
+            remote_time = float(pong.decode())
             self.delay = time.time() - remote_time
             
     @handle_websocket_errors
-    async def udp_receiver(self, websocket, udp_socket, udp_port):
+    async def udp_receiver(self, websocket, udp_socket, udp_port,udp_queue):
         while True:
-            data = await self.udp_queue.get()
+            data = await udp_queue.get()
             udp_socket.sendto(data, (self.GAME_IPV4_ADDRESS, udp_port))
 
     @handle_websocket_errors
@@ -77,9 +74,9 @@ class LANGameLink_426_client:
 
 
     @handle_websocket_errors
-    async def tcp_receiver(self, websocket, reader, tcp_port):
+    async def tcp_receiver(self, websocket, reader, tcp_port,tcp_queue):
         while True:
-            data = await self.tcp_queue.get()
+            data = await tcp_queue.get()
             reader.write(data)
             await reader.drain()
 
@@ -117,27 +114,32 @@ class LANGameLink_426_client:
     async def run(self):
         while True:
             websocket = await self.connect_to_websocket_server()
+            
+            udp_queue = asyncio.Queue()
+            tcp_queue = asyncio.Queue()
+            pong_queue = asyncio.Queue()
+        
             task_list = []  # 用于存放任务
             udp_sockets = [] 
 
-            task_list.append(asyncio.create_task(self.central_websocket_receiver(websocket))) # 将中台添加到列表中
+            task_list.append(asyncio.create_task(self.central_websocket_receiver(websocket,udp_queue,tcp_queue,pong_queue))) # 将中台添加到列表中
             
             task_list.append(asyncio.create_task(self.send_ping(websocket)))
-            task_list.append(asyncio.create_task(self.get_ping()))
+            task_list.append(asyncio.create_task(self.get_ping(pong_queue)))
             
             for udp_port in self.GAME_UDP_PORTS:
                 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 # udp_socket.setblocking(False)  # 设置为非阻塞
-                udp_socket.bind(('0.0.0.0', udp_port))  # 绑定到具体的端口上
+                udp_socket.bind((self.GAME_IPV4_ADDRESS, udp_port))  # 绑定到具体的端口上
                 udp_sockets.append(udp_socket)
                 
-                task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket, udp_port)))
+                task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket, udp_port,udp_queue)))
                 task_list.append(asyncio.create_task(self.udp_sender(websocket, udp_socket)))
 
             for tcp_port in self.GAME_TCP_PORTS:
                 reader, writer = await self.establish_tcp_connection(self.GAME_IPV4_ADDRESS, tcp_port)
 
-                task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader, tcp_port)))
+                task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader, tcp_port,tcp_queue)))
                 task_list.append(asyncio.create_task(self.tcp_sender(websocket, writer)))
 
 
