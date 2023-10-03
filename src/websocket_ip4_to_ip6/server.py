@@ -15,10 +15,6 @@ class LANGameLink_426_server:
         self.GAME_UDP_PORTS = [123]   
         self.message_callback = message_callback 
         self.delays = {}
-        
-        self.udp_queue = asyncio.Queue()
-        self.tcp_queue = asyncio.Queue()
-        self.pong_queue = asyncio.Queue()
 
         
     def send_message(self, msg):
@@ -35,34 +31,34 @@ class LANGameLink_426_server:
         return wrapper
     
     @handle_websocket_errors
-    async def central_websocket_receiver(self, websocket):
+    async def central_websocket_receiver(self, websocket,udp_queue, tcp_queue,pong_queue):
         while True:
             message = await websocket.recv()
             prefix = message[:4]
             if prefix == b"UDP:":
-                await self.udp_queue.put(message[4:])
+                await udp_queue.put(message[4:])
             elif prefix == b"TCP:":
-                await self.tcp_queue.put(message[4:])
-            elif prefix == b"PNG:":
-                await self.pong_queue.put(message[4:])
+                await tcp_queue.put(message[4:])
+            elif prefix == b"SNG:":
+                await pong_queue.put(message[4:])
+            elif prefix == b"CNG:":
+                await websocket.send(message)
 
     @handle_websocket_errors
     async def send_ping(self, websocket):
-        """不断发送PNG:消息给服务器"""
+        """不断发送SNG:消息给服务器"""
         while True:
             start_time = time.time()
-            await websocket.send(b"PNG:"+str(start_time).encode())
+            await websocket.send(b"SNG:"+str(start_time).encode())
             await asyncio.sleep(1)
     
     @handle_websocket_errors
-    async def get_ping(self):
-        """不断接收服务器发送的PNG:消息并计算延迟"""
+    async def get_ping(self,websocket,pong_queue):
+        """不断接收服务器发送的SNG:消息并计算延迟"""
         while True:
-            pong = await self.pong_queue.get()
-            remote_time = pong[4:]
-            remote_time = float(remote_time.decode())
-            self.delay = time.time() - remote_time
-            await asyncio.sleep(1)
+            pong = await pong_queue.get()
+            old_time = float(pong.decode())
+            self.delays[websocket.remote_address] = time.time() - old_time
     
     @handle_websocket_errors
     async def udp_receiver(self, websocket, udp_socket):
@@ -72,9 +68,9 @@ class LANGameLink_426_server:
             await websocket.send(b"UDP:" + game_data)
 
     @handle_websocket_errors
-    async def udp_sender(self, udp_socket, udp_port):
+    async def udp_sender(self, udp_socket, udp_port,udp_queue):
         while True:
-            data = await self.udp_queue.get()
+            data = await udp_queue.get()
             udp_socket.sendto(data, (self.GAME_IPV4_ADDRESS, udp_port))
 
     @handle_websocket_errors
@@ -84,9 +80,9 @@ class LANGameLink_426_server:
             await websocket.send(b"TCP:" + game_data)
 
     @handle_websocket_errors
-    async def tcp_sender(self, writer):
+    async def tcp_sender(self, writer,tcp_queue):
         while True:
-            data = await self.tcp_queue.get()
+            data = await tcp_queue.get()
             writer.write(data)
             await writer.drain()
 
@@ -108,36 +104,41 @@ class LANGameLink_426_server:
                 await asyncio.sleep(5)
 
     async def handle_client(self, websocket, path):
+
         while True:
             try:
                 print(f"Client {websocket.remote_address} connected!")
-
+                
+                udp_queue = asyncio.Queue()
+                tcp_queue = asyncio.Queue()
+                pong_queue = asyncio.Queue()                
+                
                 task_list = []  # 此处我们创建一个新列表来存储任务
                 udp_sockets = []  # 用于存储所有的UDP sockets
 
-                task_list.append(asyncio.create_task(self.central_websocket_receiver(websocket))) # 将中台添加到列表中
+                task_list.append(asyncio.create_task(self.central_websocket_receiver(websocket,udp_queue,tcp_queue,pong_queue))) # 将中台添加到列表中
+                
+                        # 启动测量延迟的任务
+                task_list.append(asyncio.create_task(self.send_ping(websocket))  )
+                task_list.append(asyncio.create_task(self.get_ping(websocket,pong_queue))  )
                 
                 # 处理UDP端口
                 for udp_port in self.GAME_UDP_PORTS:
                     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     udp_socket.setblocking(False)  # 设置为非阻塞
-                    udp_socket.bind(('0.0.0.0', udp_port))  # 绑定到具体的端口上
+                    udp_socket.bind((self.GAME_IPV4_ADDRESS, udp_port))  # 绑定到具体的端口上
                     udp_sockets.append(udp_socket)
                     
                     task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket)))
-                    task_list.append(asyncio.create_task(self.udp_sender(udp_socket, udp_port)))
+                    task_list.append(asyncio.create_task(self.udp_sender(udp_socket, udp_port,udp_queue)))
 
                 # 处理TCP端口
                 for tcp_port in self.GAME_TCP_PORTS:
                     reader, writer = await self.establish_tcp_connection(tcp_port)
                     task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader)))
-                    task_list.append(asyncio.create_task(self.tcp_sender(writer)))
+                    task_list.append(asyncio.create_task(self.tcp_sender(writer,tcp_queue)))
                     
-                # 启动测量延迟的任务
-                delay_task_1 =  asyncio.create_task(self.send_ping(websocket))  
-                task_list.append(delay_task_1)
-                delay_task_2 =asyncio.create_task(self.get_ping())  
-                task_list.append(delay_task_2)
+
 
                 done, pending = await asyncio.wait(task_list, return_when=asyncio.FIRST_COMPLETED)
 
@@ -149,6 +150,8 @@ class LANGameLink_426_server:
                 for udp_sock in udp_sockets:
                     udp_sock.close()
 
+                self.delays[websocket.remote_address]=None
+                
                 writer.close()
                 await writer.wait_closed()
 

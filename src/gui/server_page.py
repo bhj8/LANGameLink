@@ -149,11 +149,15 @@ class ServerFrame(tk.Frame):
             # 获取当前的总人数
             total_people = len(self.server.delays)
             
-            # 获取最高延迟
-            max_delay = max(self.server.delays.values(), default=0) * 1000  # 将秒转换为毫秒
+            if total_people == 0:
+                self.delay_var.set("未连接")
+            else:
             
-            # 更新GUI组件
-            self.delay_var.set(f"总人数: {total_people}, 最高延迟: {max_delay:.2f} ms")
+                # 获取最高延迟
+                max_delay = max(self.server.delays.values(), default=0) * 1000  # 将秒转换为毫秒
+                
+                # 更新GUI组件
+                self.delay_var.set(f"总人数: {total_people}, 最高延迟: {max_delay:.2f} ms")
 
             # 每秒更新一次延迟，并保持定时器的ID
             self.delay_update_id = self.after(1000, update_delay)
