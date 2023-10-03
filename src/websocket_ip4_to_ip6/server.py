@@ -115,12 +115,15 @@ class LANGameLink_426_server:
                 task_list = []  # 此处我们创建一个新列表来存储任务
                 udp_sockets = []  # 用于存储所有的UDP sockets
 
+                task_list.append(asyncio.create_task(self.central_websocket_receiver(websocket))) # 将中台添加到列表中
+                
                 # 处理UDP端口
                 for udp_port in self.GAME_UDP_PORTS:
                     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     udp_socket.setblocking(False)  # 设置为非阻塞
                     udp_socket.bind(('0.0.0.0', udp_port))  # 绑定到具体的端口上
                     udp_sockets.append(udp_socket)
+                    
                     task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket)))
                     task_list.append(asyncio.create_task(self.udp_sender(udp_socket, udp_port)))
 
