@@ -65,10 +65,10 @@ class LANGameLink_426_server:
             writer.write(data)
             await writer.drain()
 
-    async def establish_tcp_connection(self):
+    async def establish_tcp_connection(self, tcp_port):
         while True:
             try:
-                reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, self.GAME_TCP_PORT)
+                reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, tcp_port)
                 print("Connected to game client successfully!")
                 return reader, writer
             except ConnectionRefusedError:

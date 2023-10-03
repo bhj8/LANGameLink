@@ -65,6 +65,8 @@ class LANGameLink_426_client:
     async def connect_to_websocket_server(self):
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ssl_context.load_verify_locations('certs/cert.pem')
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         while True:
             try:
                 websocket = await websockets.connect(f"wss://[{self.SERVER_IPV6_ADDRESS}]:{self.SERVER_PORT}", ssl=ssl_context)
@@ -74,6 +76,15 @@ class LANGameLink_426_client:
             except Exception as e:
                 self.send_message(f"Error connecting to WebSocket server: {e}. Retrying in 5 seconds...")
                 await asyncio.sleep(2)
+    async def establish_tcp_connection(self, address, port):
+        while True:
+            try:
+                reader, writer = await asyncio.open_connection(address, port)
+                print(f"Connected to game client on port {port} successfully!")
+                return reader, writer
+            except ConnectionRefusedError:
+                print(f"Failed to connect to game client on port {port}. Retrying in 5 seconds...")
+                await asyncio.sleep(5)
 
     async def run(self):
         while True:
@@ -90,7 +101,7 @@ class LANGameLink_426_client:
                 ])
 
             for tcp_port in self.GAME_TCP_PORTS:
-                reader, writer = await asyncio.open_connection(self.GAME_IPV4_ADDRESS, tcp_port)
+                reader, writer = await self.establish_tcp_connection(self.GAME_IPV4_ADDRESS, tcp_port)
 
                 tasks.extend([
                     self.tcp_receiver(websocket, reader, tcp_port),
