@@ -75,54 +75,54 @@ class LANGameLink_426_server:
                 await asyncio.sleep(5)
 
 
-async def handle_client(self, websocket, path):
-    while True:
-        try:
-            print(f"Client {websocket.remote_address} connected!")
+    async def handle_client(self, websocket, path):
+        while True:
+            try:
+                print(f"Client {websocket.remote_address} connected!")
 
-            task_list = []  # 此处我们创建一个新列表来存储任务
-            udp_sockets = []  # 用于存储所有的UDP sockets
+                task_list = []  # 此处我们创建一个新列表来存储任务
+                udp_sockets = []  # 用于存储所有的UDP sockets
 
-            # 处理UDP端口
-            for udp_port in self.GAME_UDP_PORTS:
-                udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                udp_socket.bind(('0.0.0.0', udp_port))  # 绑定到具体的端口上
-                udp_sockets.append(udp_socket)
-                task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket)))
-                task_list.append(asyncio.create_task(self.udp_sender(websocket, udp_socket, udp_port)))
+                # 处理UDP端口
+                for udp_port in self.GAME_UDP_PORTS:
+                    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    udp_socket.bind(('0.0.0.0', udp_port))  # 绑定到具体的端口上
+                    udp_sockets.append(udp_socket)
+                    task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket)))
+                    task_list.append(asyncio.create_task(self.udp_sender(websocket, udp_socket, udp_port)))
 
-            # 处理TCP端口
-            for tcp_port in self.GAME_TCP_PORTS:
-                reader, writer = await self.establish_tcp_connection(tcp_port)
-                task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader)))
-                task_list.append(asyncio.create_task(self.tcp_sender(websocket, writer)))
+                # 处理TCP端口
+                for tcp_port in self.GAME_TCP_PORTS:
+                    reader, writer = await self.establish_tcp_connection(tcp_port)
+                    task_list.append(asyncio.create_task(self.tcp_receiver(websocket, reader)))
+                    task_list.append(asyncio.create_task(self.tcp_sender(websocket, writer)))
+                    
+                    # 启动测量延迟的任务
+                    delay_task = asyncio.create_task(self.measure_delay(websocket))
+                    task_list.append(delay_task)
+
+                done, pending = await asyncio.wait(task_list, return_when=asyncio.FIRST_COMPLETED)
+
+                # 取消其它的任务
+                for task in pending:
+                    task.cancel()
+
+                # 关闭所有UDP sockets
+                for udp_sock in udp_sockets:
+                    udp_sock.close()
+
+                writer.close()
+                await writer.wait_closed()
+
+                # 从延迟字典中删除客户端的数据
+                if websocket.remote_address in self.delays:
+                    del self.delays[websocket.remote_address]
+
+                print(f"Client {websocket.remote_address} disconnected!")
                 
-                # 启动测量延迟的任务
-                delay_task = asyncio.create_task(self.measure_delay(websocket))
-                task_list.append(delay_task)
-
-            done, pending = await asyncio.wait(task_list, return_when=asyncio.FIRST_COMPLETED)
-
-            # 取消其它的任务
-            for task in pending:
-                task.cancel()
-
-            # 关闭所有UDP sockets
-            for udp_sock in udp_sockets:
-                udp_sock.close()
-
-            writer.close()
-            await writer.wait_closed()
-
-            # 从延迟字典中删除客户端的数据
-            if websocket.remote_address in self.delays:
-                del self.delays[websocket.remote_address]
-
-            print(f"Client {websocket.remote_address} disconnected!")
-            
-        except websockets.ConnectionClosedError:
-            print("WebSocket connection lost. Attempting to reconnect in 3 seconds...")
-            await asyncio.sleep(3)
+            except websockets.ConnectionClosedError:
+                print("WebSocket connection lost. Attempting to reconnect in 3 seconds...")
+                await asyncio.sleep(3)
 
 
     async def run(self):
