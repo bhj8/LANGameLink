@@ -1,5 +1,6 @@
 import asyncio
 import ssl
+import time
 import websockets
 import socket
 
@@ -13,6 +14,11 @@ class LANGameLink_426_client:
         self.GAME_IPV4_ADDRESS = "127.0.0.1"
         self.GAME_TCP_PORTS = []
         self.GAME_UDP_PORTS = []
+        
+        
+        self.udp_queue = asyncio.Queue()
+        self.tcp_queue = asyncio.Queue()
+        self.pong_queue = asyncio.Queue()
 
     def send_message(self, msg):
         if self.message_callback:
@@ -27,23 +33,54 @@ class LANGameLink_426_client:
                 instance.send_message("WebSocket connection lost. Attempting to reconnect...")
         return wrapper
 
+    @handle_websocket_errors
+    async def central_websocket_receiver(self, websocket):
+        while True:
+            message = await websocket.recv()
+            prefix = message[:4]
+            if prefix == b"UDP:":
+                await self.udp_queue.put(message[4:])
+            elif prefix == b"TCP:":
+                await self.tcp_queue.put(message[4:])
+            elif prefix == b"PNG:":
+                await self.pong_queue.put(message[4:])
 
+    @handle_websocket_errors
+    async def send_ping(self, websocket):
+        """不断发送PNG:消息给服务器"""
+        while True:
+            start_time = time.time()
+            await websocket.send(b"PNG:"+str(start_time).encode())
+            await asyncio.sleep(1)
+    
+    @handle_websocket_errors
+    async def get_ping(self):
+        """不断接收服务器发送的PNG:消息并计算延迟"""
+        while True:
+            pong = await self.pong_queue.get()
+            remote_time = pong[4:]
+            remote_time = float(remote_time.decode())
+            self.delay = time.time() - remote_time
+            await asyncio.sleep(1)
+            
     @handle_websocket_errors
     async def udp_receiver(self, websocket, udp_socket, udp_port):
         while True:
-            data = await websocket.recv()
+            data = await self.udp_queue.get()
             udp_socket.sendto(data, (self.GAME_IPV4_ADDRESS, udp_port))
 
     @handle_websocket_errors
     async def udp_sender(self, websocket, udp_socket):
+        loop = asyncio.get_running_loop()
         while True:
-            game_data, _ = udp_socket.recvfrom(4096)
-            await websocket.send(game_data)
+            game_data, _ = await loop.sock_recv(udp_socket, 4096)
+            await websocket.send(b"UDP:" + game_data)
+
 
     @handle_websocket_errors
     async def tcp_receiver(self, websocket, reader, tcp_port):
         while True:
-            data = await websocket.recv()
+            data = await self.tcp_queue.get()
             reader.write(data)
             await reader.drain()
 
@@ -51,15 +88,8 @@ class LANGameLink_426_client:
     async def tcp_sender(self, websocket, writer):
         while True:
             game_data = await writer.read(4096)
-            await websocket.send(game_data)
+            await websocket.send(b"TCP:" + game_data)
 
-    async def measure_delay(self, websocket):
-        while websocket.open:
-            start_time = asyncio.get_event_loop().time()
-            await websocket.ping()
-            end_time = asyncio.get_event_loop().time()
-            self.delay = (end_time - start_time) * 1000  # Convert to milliseconds
-            await asyncio.sleep(1)  # measure delay every 10 seconds, adjust as needed
 
     @handle_websocket_errors
     async def connect_to_websocket_server(self):
@@ -71,7 +101,8 @@ class LANGameLink_426_client:
             try:
                 websocket = await websockets.connect(f"wss://[{self.SERVER_IPV6_ADDRESS}]:{self.SERVER_PORT}", ssl=ssl_context)
                 self.send_message("Connected to WebSocket server successfully!")
-                asyncio.create_task(self.measure_delay(websocket))  # Start measuring delay
+                asyncio.create_task(self.send_ping(websocket))  
+                asyncio.create_task(self.get_ping())  
                 return websocket
             except Exception as e:
                 self.send_message(f"Error connecting to WebSocket server: {e}. Retrying in 5 seconds...")
@@ -93,6 +124,7 @@ class LANGameLink_426_client:
 
             for udp_port in self.GAME_UDP_PORTS:
                 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                udp_socket.setblocking(False)  # 设置为非阻塞
                 udp_socket.bind((self.GAME_IPV4_ADDRESS, udp_port))
 
                 task_list.append(asyncio.create_task(self.udp_receiver(websocket, udp_socket, udp_port)))
