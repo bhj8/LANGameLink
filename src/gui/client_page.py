@@ -193,6 +193,5 @@ class ClientFrame(tk.Frame):
         except:
             pass
         
-        
         self.status_var.set("已断开")
         self.delay_var.set("未连接")

@@ -146,12 +146,20 @@ class ServerFrame(tk.Frame):
     def _start_delay_refresh_service(self):
         # 示例逻辑，实际实现可能会有所不同
         def update_delay():
-            self.delay_var.set(f"延迟: {self.server.delays} ms")
+            # 获取当前的总人数
+            total_people = len(self.server.delays)
+            
+            # 获取最高延迟
+            max_delay = max(self.server.delays.values(), default=0) * 1000  # 将秒转换为毫秒
+            
+            # 更新GUI组件
+            self.delay_var.set(f"总人数: {total_people}, 最高延迟: {max_delay:.2f} ms")
 
             # 每秒更新一次延迟，并保持定时器的ID
             self.delay_update_id = self.after(1000, update_delay)
 
         update_delay()
+
     def _stop_delay_refresh_service(self):
         if self.delay_update_id:
             self.after_cancel(self.delay_update_id)
@@ -164,8 +172,6 @@ class ServerFrame(tk.Frame):
         self.master.show_frame(MainFrame)
 
 
-
-
     def start_asyncio_loop(self, loop):
         asyncio.set_event_loop(loop)
         loop.run_forever()
@@ -174,6 +180,7 @@ class ServerFrame(tk.Frame):
         
         if self.service_running:
             print("Service is already running!")
+            self.status_var.set("服务已开启")
             return
 
         self.service_running = True
@@ -193,7 +200,12 @@ class ServerFrame(tk.Frame):
 
     def stop_services(self):
         self._stop_delay_refresh_service()
-        try :
+        
+        try:
+            # 先关闭WebSocket服务器
+            if hasattr(self.server, 'websocket_server'):
+                self.new_loop.call_soon_threadsafe(self.server.websocket_server.closed)
+
             # 取消所有的任务
             for task in asyncio.all_tasks(loop=self.new_loop):
                 task.cancel()
@@ -205,9 +217,7 @@ class ServerFrame(tk.Frame):
             self.service_thread.join()
         except:
             pass
-        
-        
-        self.status_var.set("已断开")
-        self.delay_var.set("未连接")
-        
-        self.service_running = False
+        finally:
+            self.status_var.set("已断开")
+            self.delay_var.set("未连接")
+            self.service_running = False
