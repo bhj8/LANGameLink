@@ -30,13 +30,15 @@ class ServerFrame(tk.Frame):
         
         # 初始化 IPv6 地址和端口
         self.inputs = [
-            tk.Label(self, text="第一步：获取主机IP信息，并通过其它软件发送给客机")
+            tk.Label(self, text="第一步：获取主机IP信息，并通过其它软件发送给客机。填写在软件中")
         ]
         self.ipv6_address_input = LabeledInput(self, "主机IPv6地址", self.server.IPV6_ADDRESS, InputValidator.validate_ipv6)
         self.ipv6_port_input = LabeledInput(self, "主机IPv6端口", self.server.IPV6_PORT, InputValidator.validate_port)
         self.inputs.append(self.ipv6_address_input)
         self.inputs.append(self.ipv6_port_input)
         
+        self.local_ipv4_address = network_utils_instance.get_local_ipv4_address()
+        self.inputs.append(LabeledInput(self, f"主机内网地址（在游戏中填入）",self.local_ipv4_address, InputValidator.validate_ipv4,readonly=True))
        # 添加一个空行
         self.inputs.append(tk.Label(self, text=""))
 
@@ -150,19 +152,26 @@ class ServerFrame(tk.Frame):
             total_people = len(self.server.delays)
             
             if total_people == 0:
-                self.delay_var.set("未连接")
+                self.delay_var.set("尚未有人连接")
             else:
-            
-                # 获取最高延迟
-                max_delay = max(self.server.delays.values(), default=0) * 1000  # 将秒转换为毫秒
-                
-                # 更新GUI组件
-                self.delay_var.set(f"总人数: {total_people}, 最高延迟: {max_delay:.2f} ms")
+                # 从self.server.delays.values()中筛选出所有float类型的值
+                valid_delays = [v for v in self.server.delays.values() if isinstance(v, float)]
+
+                if not valid_delays:
+                    # 如果没有有效的延迟值，设置一个默认信息
+                    self.delay_var.set(f"总人数: {total_people}, 无有效延迟数据")
+                else:
+                    # 获取最高延迟
+                    max_delay = max(valid_delays) * 1000  # 将秒转换为毫秒
+                    
+                    # 更新GUI组件
+                    self.delay_var.set(f"总人数: {total_people}, 最高延迟: {max_delay:.2f} ms")
 
             # 每秒更新一次延迟，并保持定时器的ID
             self.delay_update_id = self.after(1000, update_delay)
 
         update_delay()
+
 
     def _stop_delay_refresh_service(self):
         if self.delay_update_id:
@@ -186,7 +195,7 @@ class ServerFrame(tk.Frame):
             print("Service is already running!")
             self.status_var.set("服务已开启")
             return
-
+        self.status_var.set("转发服务已经启动！等待客机连接。。。")
         self.service_running = True
         # 更新客户端属性
         self._update_Server_attr()
@@ -208,7 +217,7 @@ class ServerFrame(tk.Frame):
         try:
             # 先关闭WebSocket服务器
             if hasattr(self.server, 'websocket_server'):
-                self.new_loop.call_soon_threadsafe(self.server.websocket_server.closed)
+                self.new_loop.call_soon_threadsafe(self.server.websocket_server.close)
 
             # 取消所有的任务
             for task in asyncio.all_tasks(loop=self.new_loop):
@@ -219,8 +228,8 @@ class ServerFrame(tk.Frame):
 
             # 等待线程结束
             self.service_thread.join()
-        except:
-            pass
+        except Exception as e:
+            print(e)
         finally:
             self.status_var.set("已断开")
             self.delay_var.set("未连接")
